@@ -6,10 +6,12 @@ use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowId};
+use glam::Vec2;
 
 use crate::render::camera::Camera;
 use crate::render::RenderState;
 use crate::scene::{ColorMode, DepthMode, SceneGraph};
+use crate::ui::{self, InputState, UiAction};
 
 pub struct App {
     repo_path: PathBuf,
@@ -20,6 +22,7 @@ pub struct App {
     color_mode: Arc<RwLock<ColorMode>>,
     latest_scene: Option<SceneGraph>,
     camera: Option<Camera>,
+    input_state: InputState,
 }
 
 impl App {
@@ -38,6 +41,7 @@ impl App {
             color_mode,
             latest_scene: None,
             camera: None,
+            input_state: InputState::new(),
         }
     }
 }
@@ -61,6 +65,39 @@ impl ApplicationHandler for App {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        let action = ui::handle_event(&event, &mut self.input_state);
+        match action {
+            UiAction::Pan(delta) => {
+                if let Some(camera) = &mut self.camera {
+                    camera.pan(delta);
+                }
+            }
+            UiAction::Zoom(factor) => {
+                if let Some(camera) = &mut self.camera {
+                    camera.zoom_by(factor);
+                }
+            }
+            UiAction::SetDepthMode(mode) => {
+                *self.depth_mode.blocking_write() = mode;
+            }
+            UiAction::CycleColorMode => {
+                let current = *self.color_mode.blocking_read();
+                let next = match current {
+                    ColorMode::FileType => ColorMode::Recency,
+                    ColorMode::Recency => ColorMode::FileType,
+                };
+                *self.color_mode.blocking_write() = next;
+            }
+            UiAction::ResetCamera => {
+                if let Some(camera) = &mut self.camera {
+                    camera.center = Vec2::ZERO;
+                    camera.zoom = 1.0;
+                }
+            }
+            UiAction::Deselect => {}
+            UiAction::None => {}
+        }
+
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => {

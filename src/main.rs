@@ -7,6 +7,7 @@ mod app;
 mod pipeline;
 mod render;
 mod scene;
+mod ui;
 
 use scene::DepthMode;
 
