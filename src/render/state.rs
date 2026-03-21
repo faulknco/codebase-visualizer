@@ -1,4 +1,5 @@
 // src/render/state.rs
+use std::collections::HashMap;
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 use winit::dpi::PhysicalSize;
@@ -579,6 +580,12 @@ impl RenderState {
             }
             self.rebuild_instance_buffer();
         }
+    }
+
+    /// Apply agent activity visual effects.
+    /// `active_files` maps FileId → age_seconds (0.0 = just touched, up to 60.0)
+    pub fn apply_activity(&mut self, _active_files: &HashMap<String, f32>) {
+        // TODO: visual effects will be added by the next implementation step
     }
 
     pub fn apply_lod(&mut self, zoom: f32) {

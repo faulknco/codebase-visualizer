@@ -1,8 +1,17 @@
 // src/app.rs
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::{mpsc, RwLock};
+
+use crate::socket::ActivityEvent;
+
+pub struct ActivityState {
+    pub action: String,
+    pub agent: String,
+    pub time: Instant,
+}
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
@@ -19,6 +28,8 @@ pub struct App {
     window: Option<Arc<Window>>,
     render_state: Option<RenderState>,
     scene_rx: mpsc::Receiver<SceneGraph>,
+    activity_rx: mpsc::Receiver<ActivityEvent>,
+    activity_map: HashMap<String, ActivityState>,
     depth_mode: Arc<RwLock<DepthMode>>,
     color_mode: Arc<RwLock<ColorMode>>,
     latest_scene: Option<SceneGraph>,
@@ -35,6 +46,7 @@ impl App {
     pub fn new(
         repo_path: PathBuf,
         scene_rx: mpsc::Receiver<SceneGraph>,
+        activity_rx: mpsc::Receiver<ActivityEvent>,
         depth_mode: Arc<RwLock<DepthMode>>,
         color_mode: Arc<RwLock<ColorMode>>,
         shared_graph: Arc<RwLock<Option<FileGraph>>>,
@@ -44,6 +56,8 @@ impl App {
             window: None,
             render_state: None,
             scene_rx,
+            activity_rx,
+            activity_map: HashMap::new(),
             depth_mode,
             color_mode,
             latest_scene: None,
@@ -253,6 +267,18 @@ impl ApplicationHandler for App {
         let dt = (now - self.last_frame).as_secs_f32();
         self.last_frame = now;
 
+        // Drain activity events
+        while let Ok(event) = self.activity_rx.try_recv() {
+            eprintln!("[cviz] Activity: {} {} {}", event.agent, event.action, event.file);
+            self.activity_map.insert(event.file.clone(), ActivityState {
+                action: event.action,
+                agent: event.agent,
+                time: Instant::now(),
+            });
+        }
+        // Prune old entries (>60 seconds)
+        self.activity_map.retain(|_, s| s.time.elapsed().as_secs_f32() < 60.0);
+
         // Drain the latest scene update without blocking
         let mut scene_changed = false;
         while let Ok(scene) = self.scene_rx.try_recv() {
@@ -298,6 +324,14 @@ impl ApplicationHandler for App {
         if let (Some(state), Some(scene)) = (&mut self.render_state, &self.latest_scene) {
             let node_ids: Vec<String> = scene.nodes.iter().map(|n| n.id.clone()).collect();
             state.apply_selection(self.selected_node.as_deref(), &node_ids);
+        }
+
+        // Apply agent activity visual effects
+        if let (Some(state), Some(_scene)) = (&mut self.render_state, &self.latest_scene) {
+            let active_files: HashMap<String, f32> = self.activity_map.iter()
+                .map(|(file, s)| (file.clone(), s.time.elapsed().as_secs_f32()))
+                .collect();
+            state.apply_activity(&active_files);
         }
 
         // Update labels (zoom-dependent)
