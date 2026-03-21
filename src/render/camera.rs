@@ -31,8 +31,14 @@ impl Camera {
         proj * view
     }
 
-    pub fn pan(&mut self, delta: Vec2) {
-        self.target_center -= delta / self.zoom;
+    /// Pan by screen-space pixel delta. window_size needed for correct scaling.
+    pub fn pan(&mut self, delta: Vec2, window_size: Vec2) {
+        // Convert pixel delta to world-space delta:
+        // Screen width in pixels maps to 2 * half_w = 20.0 / zoom in world units
+        let world_per_pixel_x = 20.0 / (self.target_zoom * window_size.x);
+        let world_per_pixel_y = 20.0 / (self.target_zoom * self.aspect * window_size.y);
+        self.target_center.x -= delta.x * world_per_pixel_x;
+        self.target_center.y += delta.y * world_per_pixel_y; // flip Y (screen Y is down, world Y is up)
     }
 
     pub fn zoom_by(&mut self, factor: f32) {

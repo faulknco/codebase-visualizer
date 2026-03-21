@@ -78,8 +78,10 @@ impl ApplicationHandler for App {
         let action = ui::handle_event(&event, &mut self.input_state);
         match action {
             UiAction::Pan(delta) => {
-                if let Some(camera) = &mut self.camera {
-                    camera.pan(delta);
+                if let (Some(camera), Some(window)) = (&mut self.camera, &self.window) {
+                    let size = window.inner_size();
+                    let window_size = Vec2::new(size.width as f32, size.height as f32);
+                    camera.pan(delta, window_size);
                 }
             }
             UiAction::Zoom(factor) => {
