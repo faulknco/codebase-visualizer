@@ -39,6 +39,7 @@ pub struct SceneNode {
     pub radius: f32,
     pub color: [f32; 4],
     pub glow: f32,
+    pub directory: String,
 }
 
 #[derive(Debug, Clone)]

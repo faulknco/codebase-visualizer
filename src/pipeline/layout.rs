@@ -381,7 +381,8 @@ pub fn compute_layout(
             ColorMode::FileType => color_for_extension(id),
             ColorMode::Recency => color_for_recency(recency),
         };
-        SceneNode { id: id.clone(), pos: positions[i], depth, radius, color, glow: glow.clamp(0.0, 1.0) }
+        let directory = if let Some(idx) = id.find('/') { id[..idx].to_string() } else { String::new() };
+        SceneNode { id: id.clone(), pos: positions[i], depth, radius, color, glow: glow.clamp(0.0, 1.0), directory }
     }).collect();
 
     let edges: Vec<SceneEdge> = graph.co_change.iter().filter_map(|(a, b, score)| {

@@ -6,6 +6,7 @@ use winit::window::Window;
 
 use super::camera::Camera;
 use super::edge::{EdgeVertex, edges_to_vertices};
+use super::hull::{HullVertex, build_hull_geometry};
 use super::node::{NodeInstance, NodeVertex, QUAD_VERTICES};
 use crate::scene::SceneGraph;
 
@@ -16,6 +17,7 @@ pub struct RenderState {
     config: wgpu::SurfaceConfiguration,
     node_pipeline: wgpu::RenderPipeline,
     edge_pipeline: wgpu::RenderPipeline,
+    hull_pipeline: wgpu::RenderPipeline,
     camera_bind_group: wgpu::BindGroup,
     camera_buffer: wgpu::Buffer,
     vertex_buffer: wgpu::Buffer,
@@ -23,6 +25,8 @@ pub struct RenderState {
     instance_count: u32,
     edge_vertex_buffer: Option<wgpu::Buffer>,
     edge_vertex_count: u32,
+    hull_vertex_buffer: Option<wgpu::Buffer>,
+    hull_vertex_count: u32,
     current_instances: Vec<NodeInstance>,
     target_instances: Vec<NodeInstance>,
     current_edge_verts: Vec<EdgeVertex>,
@@ -238,6 +242,58 @@ impl RenderState {
             cache: None,
         });
 
+        // Hull shader
+        let hull_shader_src = include_str!("../../assets/shaders/hull.wgsl");
+        let hull_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("hull shader"),
+            source: wgpu::ShaderSource::Wgsl(hull_shader_src.into()),
+        });
+
+        let hull_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("hull pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &hull_shader,
+                entry_point: Some("vs_main"),
+                buffers: &[HullVertex::desc()],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &hull_shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: Some(wgpu::BlendState {
+                        color: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::SrcAlpha,
+                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                        alpha: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::One,
+                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                    }),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: None,
+                polygon_mode: wgpu::PolygonMode::Fill,
+                unclipped_depth: false,
+                conservative: false,
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+
         // Quad vertex buffer (created once)
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("quad vertex buffer"),
@@ -252,6 +308,7 @@ impl RenderState {
             config,
             node_pipeline,
             edge_pipeline,
+            hull_pipeline,
             camera_bind_group,
             camera_buffer,
             vertex_buffer,
@@ -259,6 +316,8 @@ impl RenderState {
             instance_count: 0,
             edge_vertex_buffer: None,
             edge_vertex_count: 0,
+            hull_vertex_buffer: None,
+            hull_vertex_count: 0,
             current_instances: Vec::new(),
             target_instances: Vec::new(),
             current_edge_verts: Vec::new(),
@@ -299,6 +358,22 @@ impl RenderState {
         if self.current_edge_verts.is_empty() {
             self.current_edge_verts = self.target_edge_verts.clone();
             self.rebuild_edge_buffer();
+        }
+    }
+
+    pub fn update_hulls(&mut self, scene: &SceneGraph) {
+        let verts = build_hull_geometry(&scene.nodes);
+        self.hull_vertex_count = verts.len() as u32;
+        if !verts.is_empty() {
+            self.hull_vertex_buffer = Some(
+                self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("hull vertex buffer"),
+                    contents: bytemuck::cast_slice(&verts),
+                    usage: wgpu::BufferUsages::VERTEX,
+                }),
+            );
+        } else {
+            self.hull_vertex_buffer = None;
         }
     }
 
@@ -468,6 +543,16 @@ impl RenderState {
                 depth_stencil_attachment: None,
                 ..Default::default()
             });
+
+            // Draw hull backgrounds FIRST (behind everything)
+            if let Some(hull_buf) = &self.hull_vertex_buffer {
+                if self.hull_vertex_count > 0 {
+                    pass.set_pipeline(&self.hull_pipeline);
+                    pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                    pass.set_vertex_buffer(0, hull_buf.slice(..));
+                    pass.draw(0..self.hull_vertex_count, 0..1);
+                }
+            }
 
             // Draw edges BEFORE nodes so nodes render on top
             if self.show_edges && self.current_zoom > 0.15 {

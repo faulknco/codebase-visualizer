@@ -267,6 +267,7 @@ impl ApplicationHandler for App {
             }
             if let (Some(state), Some(scene)) = (&mut self.render_state, &self.latest_scene) {
                 state.update_scene(scene);
+                state.update_hulls(scene);
             }
         }
 
