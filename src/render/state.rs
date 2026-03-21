@@ -7,6 +7,7 @@ use winit::window::Window;
 use super::camera::Camera;
 use super::edge::{EdgeVertex, edges_to_vertices};
 use super::hull::{HullVertex, build_hull_geometry};
+use super::label::{LabelVertex, build_label_quads, create_font_texture};
 use super::node::{NodeInstance, NodeVertex, QUAD_VERTICES};
 use crate::scene::SceneGraph;
 
@@ -27,6 +28,11 @@ pub struct RenderState {
     edge_vertex_count: u32,
     hull_vertex_buffer: Option<wgpu::Buffer>,
     hull_vertex_count: u32,
+    label_pipeline: wgpu::RenderPipeline,
+    label_vertex_buffer: Option<wgpu::Buffer>,
+    label_vertex_count: u32,
+    font_bind_group: wgpu::BindGroup,
+    camera_bind_group_layout: wgpu::BindGroupLayout,
     current_instances: Vec<NodeInstance>,
     target_instances: Vec<NodeInstance>,
     current_edge_verts: Vec<EdgeVertex>,
@@ -294,6 +300,112 @@ impl RenderState {
             cache: None,
         });
 
+        // --- Label pipeline (2 bind groups: camera + font texture) ---
+        let (_font_texture, font_texture_view) = create_font_texture(&device, &queue);
+
+        let font_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("font bind group layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+            });
+
+        let font_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("font sampler"),
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+
+        let font_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("font bind group"),
+            layout: &font_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&font_texture_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&font_sampler),
+                },
+            ],
+        });
+
+        let label_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("label pipeline layout"),
+                bind_group_layouts: &[&camera_bind_group_layout, &font_bind_group_layout],
+                immediate_size: 0,
+            });
+
+        let label_shader_src = include_str!("../../assets/shaders/label.wgsl");
+        let label_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("label shader"),
+            source: wgpu::ShaderSource::Wgsl(label_shader_src.into()),
+        });
+
+        let label_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("label pipeline"),
+            layout: Some(&label_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &label_shader,
+                entry_point: Some("vs_main"),
+                buffers: &[LabelVertex::desc()],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &label_shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: Some(wgpu::BlendState {
+                        color: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::SrcAlpha,
+                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                        alpha: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::One,
+                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                    }),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: None,
+                polygon_mode: wgpu::PolygonMode::Fill,
+                unclipped_depth: false,
+                conservative: false,
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+
         // Quad vertex buffer (created once)
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("quad vertex buffer"),
@@ -309,6 +421,11 @@ impl RenderState {
             node_pipeline,
             edge_pipeline,
             hull_pipeline,
+            label_pipeline,
+            label_vertex_buffer: None,
+            label_vertex_count: 0,
+            font_bind_group,
+            camera_bind_group_layout,
             camera_bind_group,
             camera_buffer,
             vertex_buffer,
@@ -374,6 +491,23 @@ impl RenderState {
             );
         } else {
             self.hull_vertex_buffer = None;
+        }
+    }
+
+    pub fn update_labels(&mut self, scene: &SceneGraph, zoom: f32) {
+        let verts = build_label_quads(&scene.nodes, zoom);
+        self.label_vertex_count = verts.len() as u32;
+        if !verts.is_empty() {
+            self.label_vertex_buffer = Some(
+                self.device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("label vertex buffer"),
+                        contents: bytemuck::cast_slice(&verts),
+                        usage: wgpu::BufferUsages::VERTEX,
+                    }),
+            );
+        } else {
+            self.label_vertex_buffer = None;
         }
     }
 
@@ -574,6 +708,17 @@ impl RenderState {
                     pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
                     pass.set_vertex_buffer(1, instance_buffer.slice(..));
                     pass.draw(0..6, 0..self.instance_count);
+                }
+            }
+
+            // Draw labels LAST (on top of everything)
+            if let Some(label_buf) = &self.label_vertex_buffer {
+                if self.label_vertex_count > 0 {
+                    pass.set_pipeline(&self.label_pipeline);
+                    pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                    pass.set_bind_group(1, &self.font_bind_group, &[]);
+                    pass.set_vertex_buffer(0, label_buf.slice(..));
+                    pass.draw(0..self.label_vertex_count, 0..1);
                 }
             }
         }

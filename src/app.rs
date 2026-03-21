@@ -292,6 +292,13 @@ impl ApplicationHandler for App {
             state.apply_selection(self.selected_node.as_deref(), &node_ids);
         }
 
+        // Update labels (zoom-dependent)
+        if let (Some(state), Some(scene), Some(camera)) =
+            (&mut self.render_state, &self.latest_scene, &self.camera)
+        {
+            state.update_labels(scene, camera.zoom);
+        }
+
         // Update camera uniform
         if let (Some(state), Some(camera)) = (&mut self.render_state, &self.camera) {
             state.update_camera(camera);
