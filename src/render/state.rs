@@ -531,7 +531,8 @@ impl RenderState {
                 depth: 0.0,
                 color: [0.0; 4],
                 glow: 0.0,
-                _padding: [0.0; 3],
+                activity: 0.0,
+                _padding: [0.0; 2],
             });
             // Snap any new entries
             for i in self.current_instances.len()..target_len {
@@ -584,8 +585,31 @@ impl RenderState {
 
     /// Apply agent activity visual effects.
     /// `active_files` maps FileId → age_seconds (0.0 = just touched, up to 60.0)
-    pub fn apply_activity(&mut self, _active_files: &HashMap<String, f32>) {
-        // TODO: visual effects will be added by the next implementation step
+    pub fn apply_activity(&mut self, active_files: &HashMap<String, f32>, node_ids: &[String]) {
+        if active_files.is_empty() {
+            return;
+        }
+        let mut changed = false;
+        for (i, inst) in self.current_instances.iter_mut().enumerate() {
+            if i < node_ids.len() {
+                if let Some(&age) = active_files.get(&node_ids[i]) {
+                    // Fade from 1.0 (just touched) to 0.0 (60 seconds old)
+                    let activity = (1.0 - age / 60.0).clamp(0.0, 1.0);
+                    inst.activity = activity;
+                    // Boost glow for active files
+                    inst.glow = inst.glow.max(0.8 * activity);
+                    changed = true;
+                } else {
+                    if inst.activity > 0.0 {
+                        inst.activity = 0.0;
+                        changed = true;
+                    }
+                }
+            }
+        }
+        if changed {
+            self.rebuild_instance_buffer();
+        }
     }
 
     pub fn apply_lod(&mut self, zoom: f32) {

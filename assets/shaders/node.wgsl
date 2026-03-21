@@ -13,6 +13,7 @@ struct InstanceInput {
     @location(3) depth: f32,
     @location(4) color: vec4<f32>,
     @location(5) glow: f32,
+    @location(6) activity: f32,
 };
 
 struct VertexOutput {
@@ -20,6 +21,7 @@ struct VertexOutput {
     @location(0) uv: vec2<f32>,
     @location(1) color: vec4<f32>,
     @location(2) glow: f32,
+    @location(3) activity: f32,
 };
 
 @vertex
@@ -34,6 +36,7 @@ fn vs_main(vert: VertexInput, inst: InstanceInput) -> VertexOutput {
     out.uv = vert.position;
     out.color = inst.color;
     out.glow = inst.glow;
+    out.activity = inst.activity;
     return out;
 }
 
@@ -48,7 +51,17 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let lit = in.color.rgb * (0.4 + 0.6 * core);
     let glow_strength = in.glow * smoothstep(1.0, 0.3, dist) * 0.5;
     let glow_color = in.color.rgb * glow_strength;
-    let final_color = lit + glow_color;
+    var final_color = lit + glow_color;
     let alpha = edge;
+
+    // Agent activity: pulsing cyan ring
+    if (in.activity > 0.0) {
+        let ring_dist = abs(dist - 0.85);
+        let ring = smoothstep(0.1, 0.0, ring_dist) * in.activity;
+        let agent_color = vec3<f32>(0.2, 0.85, 1.0);  // cyan
+        final_color = mix(final_color, agent_color, in.activity * 0.5);  // tint toward cyan
+        final_color += agent_color * ring * 0.8;  // add ring
+    }
+
     return vec4<f32>(final_color, alpha);
 }

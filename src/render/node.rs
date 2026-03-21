@@ -51,7 +51,8 @@ pub struct NodeInstance {
     pub depth: f32,
     pub color: [f32; 4],
     pub glow: f32,
-    pub _padding: [f32; 3],
+    pub activity: f32,
+    pub _padding: [f32; 2],
 }
 
 impl NodeInstance {
@@ -62,7 +63,8 @@ impl NodeInstance {
             depth: node.depth,
             color: node.color,
             glow: node.glow,
-            _padding: [0.0; 3],
+            activity: 0.0,
+            _padding: [0.0; 2],
         }
     }
 
@@ -94,6 +96,11 @@ impl NodeInstance {
                 wgpu::VertexAttribute {
                     offset: 32,
                     shader_location: 5,
+                    format: wgpu::VertexFormat::Float32,
+                },
+                wgpu::VertexAttribute {
+                    offset: 36,
+                    shader_location: 6,
                     format: wgpu::VertexFormat::Float32,
                 },
             ],

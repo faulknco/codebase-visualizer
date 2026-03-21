@@ -327,11 +327,12 @@ impl ApplicationHandler for App {
         }
 
         // Apply agent activity visual effects
-        if let (Some(state), Some(_scene)) = (&mut self.render_state, &self.latest_scene) {
+        if let (Some(state), Some(scene)) = (&mut self.render_state, &self.latest_scene) {
             let active_files: HashMap<String, f32> = self.activity_map.iter()
                 .map(|(file, s)| (file.clone(), s.time.elapsed().as_secs_f32()))
                 .collect();
-            state.apply_activity(&active_files);
+            let node_ids: Vec<String> = scene.nodes.iter().map(|n| n.id.clone()).collect();
+            state.apply_activity(&active_files, &node_ids);
         }
 
         // Update labels (zoom-dependent)
