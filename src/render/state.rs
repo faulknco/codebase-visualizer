@@ -27,6 +27,7 @@ pub struct RenderState {
     target_instances: Vec<NodeInstance>,
     current_edge_verts: Vec<EdgeVertex>,
     target_edge_verts: Vec<EdgeVertex>,
+    pub show_edges: bool,
 }
 
 fn lerp_f32(a: f32, b: f32, t: f32) -> f32 {
@@ -261,6 +262,7 @@ impl RenderState {
             target_instances: Vec::new(),
             current_edge_verts: Vec::new(),
             target_edge_verts: Vec::new(),
+            show_edges: true,
         }
     }
 
@@ -455,12 +457,14 @@ impl RenderState {
             });
 
             // Draw edges BEFORE nodes so nodes render on top
-            if let Some(edge_buf) = &self.edge_vertex_buffer {
-                if self.edge_vertex_count > 0 {
-                    pass.set_pipeline(&self.edge_pipeline);
-                    pass.set_bind_group(0, &self.camera_bind_group, &[]);
-                    pass.set_vertex_buffer(0, edge_buf.slice(..));
-                    pass.draw(0..self.edge_vertex_count, 0..1);
+            if self.show_edges {
+                if let Some(edge_buf) = &self.edge_vertex_buffer {
+                    if self.edge_vertex_count > 0 {
+                        pass.set_pipeline(&self.edge_pipeline);
+                        pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                        pass.set_vertex_buffer(0, edge_buf.slice(..));
+                        pass.draw(0..self.edge_vertex_count, 0..1);
+                    }
                 }
             }
 

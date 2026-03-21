@@ -100,6 +100,24 @@ impl ApplicationHandler for App {
                     camera.reset();
                 }
             }
+            UiAction::FitAll => {
+                if let (Some(camera), Some(scene)) = (&mut self.camera, &self.latest_scene) {
+                    let positions: Vec<(f32, f32)> = scene.nodes.iter()
+                        .map(|n| (n.pos.x, n.pos.y))
+                        .collect();
+                    camera.fit_to_scene(&positions);
+                }
+            }
+            UiAction::ToggleEdges => {
+                if let Some(state) = &mut self.render_state {
+                    state.show_edges = !state.show_edges;
+                    eprintln!("[cviz] Edges: {}", if state.show_edges { "on" } else { "off" });
+                }
+            }
+            UiAction::Quit => {
+                event_loop.exit();
+                return;
+            }
             UiAction::Click(pos) => {
                 // Hit test on click
                 if let (Some(scene), Some(camera), Some(window)) =
@@ -163,6 +181,16 @@ impl ApplicationHandler for App {
         }
 
         if scene_changed {
+            if let Some(scene) = &self.latest_scene {
+                eprintln!("[cviz] App received scene: {} nodes, {} edges", scene.nodes.len(), scene.edges.len());
+                // Auto-fit camera on first scene
+                if let Some(camera) = &mut self.camera {
+                    let positions: Vec<(f32, f32)> = scene.nodes.iter()
+                        .map(|n| (n.pos.x, n.pos.y))
+                        .collect();
+                    camera.fit_to_scene(&positions);
+                }
+            }
             if let (Some(state), Some(scene)) = (&mut self.render_state, &self.latest_scene) {
                 state.update_scene(scene);
             }

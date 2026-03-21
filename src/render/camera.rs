@@ -12,10 +12,10 @@ impl Camera {
     pub fn new(aspect: f32) -> Self {
         Self {
             center: Vec2::ZERO,
-            zoom: 1.0,
+            zoom: 0.2,
             aspect,
             target_center: Vec2::ZERO,
-            target_zoom: 1.0,
+            target_zoom: 0.2,
         }
     }
 
@@ -52,6 +52,42 @@ impl Camera {
 
     pub fn reset(&mut self) {
         self.target_center = Vec2::ZERO;
-        self.target_zoom = 1.0;
+        self.target_zoom = 0.2;
+    }
+
+    /// Fit all nodes in view by computing bounding box and setting zoom/center accordingly.
+    pub fn fit_to_scene(&mut self, positions: &[(f32, f32)]) {
+        if positions.is_empty() {
+            return;
+        }
+        let mut min_x = f32::MAX;
+        let mut max_x = f32::MIN;
+        let mut min_y = f32::MAX;
+        let mut max_y = f32::MIN;
+        for &(x, y) in positions {
+            min_x = min_x.min(x);
+            max_x = max_x.max(x);
+            min_y = min_y.min(y);
+            max_y = max_y.max(y);
+        }
+        // Add padding
+        let pad = 2.0;
+        min_x -= pad;
+        max_x += pad;
+        min_y -= pad;
+        max_y += pad;
+
+        let center_x = (min_x + max_x) / 2.0;
+        let center_y = (min_y + max_y) / 2.0;
+        let width = max_x - min_x;
+        let height = max_y - min_y;
+
+        // Camera shows half_w = 10.0 / zoom on each side, so total = 20.0 / zoom
+        let zoom_w = 20.0 / width.max(0.1);
+        let zoom_h = 20.0 / (height * self.aspect).max(0.1);
+        let zoom = zoom_w.min(zoom_h).clamp(0.01, 50.0);
+
+        self.target_center = Vec2::new(center_x, center_y);
+        self.target_zoom = zoom;
     }
 }

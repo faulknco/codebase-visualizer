@@ -47,7 +47,8 @@ pub fn compute_layout(
     let mut positions: Vec<Vec2> = (0..n)
         .map(|i| {
             let angle = (i as f32 / n as f32) * std::f32::consts::TAU;
-            Vec2::new(angle.cos() * 5.0, angle.sin() * 5.0)
+            let spread = (n as f32).sqrt() * 2.0;
+            Vec2::new(angle.cos() * spread, angle.sin() * spread)
         })
         .collect();
 
@@ -59,9 +60,10 @@ pub fn compute_layout(
         }
     }
 
-    let repulsion = 2.0;
-    let attraction = 0.5;
-    let damping = 0.95;
+    // Scale repulsion with node count so large graphs spread out
+    let repulsion = 2.0 + (n as f32).sqrt();
+    let attraction = 0.15;
+    let damping = 0.9;
     let mut velocities = vec![Vec2::ZERO; n];
 
     for _ in 0..iterations {
@@ -85,19 +87,22 @@ pub fn compute_layout(
             forces[j] -= force;
         }
 
-        for i in 0..n {
-            for j in (i + 1)..n {
-                if let (Some(ea), Some(eb)) = (
-                    embed_map.embeddings.get(&ids[i]),
-                    embed_map.embeddings.get(&ids[j]),
-                ) {
-                    let sim = 1.0 - embedding_distance(ea, eb);
-                    if sim > 0.3 {
-                        let diff = positions[j] - positions[i];
-                        let dist = diff.length();
-                        let force = diff.normalize() * 0.1 * sim * dist;
-                        forces[i] += force;
-                        forces[j] -= force;
+        // Embedding similarity attraction — skip for large graphs (O(n²) is too expensive)
+        if n <= 100 {
+            for i in 0..n {
+                for j in (i + 1)..n {
+                    if let (Some(ea), Some(eb)) = (
+                        embed_map.embeddings.get(&ids[i]),
+                        embed_map.embeddings.get(&ids[j]),
+                    ) {
+                        let sim = 1.0 - embedding_distance(ea, eb);
+                        if sim > 0.3 {
+                            let diff = positions[j] - positions[i];
+                            let dist = diff.length();
+                            let force = diff.normalize() * 0.1 * sim * dist;
+                            forces[i] += force;
+                            forces[j] -= force;
+                        }
                     }
                 }
             }
@@ -130,7 +135,7 @@ pub fn compute_layout(
                 info.commit_count as f32 / max_cc
             }
         };
-        let radius = (info.lines as f32).ln().max(0.5) * 0.15;
+        let radius = (info.lines as f32 + 1.0).ln().max(1.0) * 0.3;
         let glow = (info.commit_count as f32).ln() / 5.0;
         let recency = (info.last_modified - min_timestamp) as f32 / time_range;
         let color = match color_mode {
@@ -155,13 +160,15 @@ pub async fn run(
     depth_mode: Arc<RwLock<DepthMode>>,
     color_mode: Arc<RwLock<ColorMode>>,
 ) {
-    log::info!("LayoutEngine started");
+    eprintln!("[cviz] LayoutEngine started");
 
     while let Some((graph, embed_map)) = rx.recv().await {
         let dm = *depth_mode.read().await;
         let cm = *color_mode.read().await;
-        let scene = compute_layout(&graph, &embed_map, dm, cm, 200);
-        log::info!("Layout: {} nodes, {} edges", scene.nodes.len(), scene.edges.len());
+        eprintln!("[cviz] Layout computing for {} files...", graph.files.len());
+        let iters = if graph.files.len() > 500 { 50 } else if graph.files.len() > 200 { 100 } else { 200 };
+        let scene = compute_layout(&graph, &embed_map, dm, cm, iters);
+        eprintln!("[cviz] Layout: {} nodes, {} edges", scene.nodes.len(), scene.edges.len());
         if scene_tx.send(scene).await.is_err() { break; }
     }
 }

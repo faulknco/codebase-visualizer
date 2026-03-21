@@ -83,7 +83,7 @@ pub async fn run(
     mut graph_rx: mpsc::Receiver<FileGraph>,
     tx: mpsc::Sender<(FileGraph, EmbeddingMap)>,
 ) {
-    log::info!("Embedder started");
+    eprintln!("[cviz] Embedder started");
 
     while let Some(graph) = graph_rx.recv().await {
         let mut file_contents: HashMap<String, String> = HashMap::new();
@@ -97,7 +97,7 @@ pub async fn run(
         let raw_embeddings = compute_tfidf(&file_contents);
         let embed_map = EmbeddingMap { embeddings: raw_embeddings };
 
-        log::info!("Embedder: computed {} embeddings", embed_map.embeddings.len());
+        eprintln!("[cviz] Embedder: computed {} embeddings", embed_map.embeddings.len());
 
         if tx.send((graph, embed_map)).await.is_err() { break; }
     }

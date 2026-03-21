@@ -88,32 +88,59 @@ pub fn collect_file_graph(repo_path: &Path, max_commits: usize) -> FileGraph {
         );
     }
 
-    let file_ids: Vec<FileId> = files.keys().cloned().collect();
+    // Build co-change from commit data directly (avoids O(n²) scan)
+    let mut pair_counts: HashMap<(FileId, FileId), usize> = HashMap::new();
+    let mut file_commit_counts: HashMap<FileId, usize> = HashMap::new();
+
+    for commit_set in &commit_files {
+        let commit_vec: Vec<&FileId> = commit_set.iter()
+            .filter(|f| files.contains_key(*f))
+            .collect();
+        for f in &commit_vec {
+            *file_commit_counts.entry((*f).clone()).or_default() += 1;
+        }
+        // Only consider commits touching ≤ 50 files (large commits are noise)
+        if commit_vec.len() <= 50 {
+            for i in 0..commit_vec.len() {
+                for j in (i + 1)..commit_vec.len() {
+                    let (a, b) = if commit_vec[i] < commit_vec[j] {
+                        (commit_vec[i].clone(), commit_vec[j].clone())
+                    } else {
+                        (commit_vec[j].clone(), commit_vec[i].clone())
+                    };
+                    *pair_counts.entry((a, b)).or_default() += 1;
+                }
+            }
+        }
+    }
+
     let mut co_change = Vec::new();
-    for i in 0..file_ids.len() {
-        for j in (i + 1)..file_ids.len() {
-            let a = &file_ids[i];
-            let b = &file_ids[j];
-            let together = commit_files.iter().filter(|c| c.contains(a) && c.contains(b)).count();
-            if together == 0 { continue; }
-            let either = commit_files.iter().filter(|c| c.contains(a) || c.contains(b)).count();
-            let score = together as f32 / either as f32;
+    for ((a, b), together) in &pair_counts {
+        let count_a = file_commit_counts.get(a).copied().unwrap_or(1);
+        let count_b = file_commit_counts.get(b).copied().unwrap_or(1);
+        let either = count_a + count_b - together;
+        let score = *together as f32 / either.max(1) as f32;
+        // Only keep significant co-changes
+        if score > 0.1 && *together >= 2 {
             co_change.push((a.clone(), b.clone(), score));
         }
     }
+
+    eprintln!("[cviz] Co-change pairs (filtered): {}", co_change.len());
 
     FileGraph { files, co_change }
 }
 
 pub async fn run(repo_path: PathBuf, tx: mpsc::Sender<FileGraph>) {
-    log::info!("GitCollector started for {}", repo_path.display());
+    eprintln!("[cviz] GitCollector started for {}", repo_path.display());
 
     let graph = collect_file_graph(&repo_path, 500);
-    log::info!("GitCollector: {} files, {} co-change pairs", graph.files.len(), graph.co_change.len());
+    eprintln!("[cviz] GitCollector: {} files, {} co-change pairs", graph.files.len(), graph.co_change.len());
     if tx.send(graph).await.is_err() { return; }
 
+    // Only re-poll every 30 seconds to avoid constant recomputation
     loop {
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
         let graph = collect_file_graph(&repo_path, 500);
         if tx.send(graph).await.is_err() { break; }
     }

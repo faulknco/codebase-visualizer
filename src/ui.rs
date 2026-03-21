@@ -34,8 +34,11 @@ pub enum UiAction {
     SetDepthMode(DepthMode),
     CycleColorMode,
     ResetCamera,
+    FitAll,
+    ToggleEdges,
     Deselect,
     Click(Vec2),
+    Quit,
     None,
 }
 
@@ -84,6 +87,11 @@ pub fn handle_event(event: &WindowEvent, state: &mut InputState) -> UiAction {
                 Key::Character(c) if c.as_str() == "2" => UiAction::SetDepthMode(DepthMode::Coupling),
                 Key::Character(c) if c.as_str() == "3" => UiAction::SetDepthMode(DepthMode::Importance),
                 Key::Character(c) if c.as_str() == "c" => UiAction::CycleColorMode,
+                Key::Character(c) if c.as_str() == "f" => UiAction::FitAll,
+                Key::Character(c) if c.as_str() == "g" => UiAction::ToggleEdges,
+                Key::Character(c) if c.as_str() == "q" => UiAction::Quit,
+                Key::Character(c) if c.as_str() == "=" || c.as_str() == "+" => UiAction::Zoom(1.2),
+                Key::Character(c) if c.as_str() == "-" => UiAction::Zoom(0.8),
                 Key::Named(NamedKey::Escape) => UiAction::Deselect,
                 Key::Named(NamedKey::Space) => UiAction::ResetCamera,
                 _ => UiAction::None,
