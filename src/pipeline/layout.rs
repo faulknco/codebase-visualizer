@@ -77,6 +77,198 @@ fn color_for_recency(normalized_recency: f32) -> [f32; 4] {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Barnes-Hut quadtree for O(n log n) repulsion
+// ---------------------------------------------------------------------------
+
+const MAX_DEPTH: u32 = 20;
+
+struct QuadTree {
+    min: Vec2,
+    max: Vec2,
+    center_of_mass: Vec2,
+    total_mass: f32,
+    // Leaf: Some(index), Internal: None
+    node_index: Option<usize>,
+    // Children: [NW, NE, SW, SE]
+    children: Option<Box<[QuadTree; 4]>>,
+}
+
+impl QuadTree {
+    fn new(min: Vec2, max: Vec2) -> Self {
+        QuadTree {
+            min,
+            max,
+            center_of_mass: Vec2::ZERO,
+            total_mass: 0.0,
+            node_index: None,
+            children: None,
+        }
+    }
+
+    fn is_leaf(&self) -> bool {
+        self.children.is_none()
+    }
+
+    fn cell_size(&self) -> f32 {
+        (self.max - self.min).max_element()
+    }
+
+    fn mid(&self) -> Vec2 {
+        (self.min + self.max) * 0.5
+    }
+
+    fn quadrant_bounds(&self, q: usize) -> (Vec2, Vec2) {
+        let mid = self.mid();
+        match q {
+            0 => (Vec2::new(self.min.x, mid.y),  Vec2::new(mid.x,      self.max.y)), // NW
+            1 => (mid,                             self.max),                          // NE
+            2 => (self.min,                        mid),                               // SW
+            _ => (Vec2::new(mid.x, self.min.y),   Vec2::new(self.max.x, mid.y)),     // SE
+        }
+    }
+
+    fn quadrant_for(&self, pos: Vec2) -> usize {
+        let mid = self.mid();
+        match (pos.x >= mid.x, pos.y >= mid.y) {
+            (false, true)  => 0, // NW
+            (true,  true)  => 1, // NE
+            (false, false) => 2, // SW
+            (true,  false) => 3, // SE
+        }
+    }
+
+    fn insert(&mut self, pos: Vec2, idx: usize, depth: u32) {
+        // Update center of mass incrementally (all masses = 1.0)
+        self.center_of_mass = (self.center_of_mass * self.total_mass + pos) / (self.total_mass + 1.0);
+        self.total_mass += 1.0;
+
+        if self.total_mass == 1.0 {
+            // First node in this cell — store as leaf
+            self.node_index = Some(idx);
+            return;
+        }
+
+        // At max depth, just accumulate mass without subdividing further
+        if depth >= MAX_DEPTH {
+            self.node_index = None;
+            return;
+        }
+
+        // Promote existing leaf into children if needed
+        if self.is_leaf() {
+            // Subdivide: move the existing leaf node down
+            let (b0_min, b0_max) = self.quadrant_bounds(0);
+            let (b1_min, b1_max) = self.quadrant_bounds(1);
+            let (b2_min, b2_max) = self.quadrant_bounds(2);
+            let (b3_min, b3_max) = self.quadrant_bounds(3);
+            self.children = Some(Box::new([
+                QuadTree::new(b0_min, b0_max),
+                QuadTree::new(b1_min, b1_max),
+                QuadTree::new(b2_min, b2_max),
+                QuadTree::new(b3_min, b3_max),
+            ]));
+
+            if let Some(old_idx) = self.node_index.take() {
+                // We need the old position — but we only store center_of_mass.
+                // Before we updated it above, the old single node's position was
+                // the previous center_of_mass. Recover it:
+                // new_com = (old_com * (total-1) + pos) / total  =>  old_com = (new_com * total - pos) / (total-1)
+                // total is already incremented, so old total = total_mass - 1 (before this call it was 1)
+                // At this point total_mass = 2 (we just added the second node above).
+                // old single-node position = previous center_of_mass before update
+                // = (current_com * 2 - pos) / 1  = current_com*2 - pos
+                let old_pos = self.center_of_mass * 2.0 - pos;
+                let q = self.quadrant_for(old_pos);
+                if let Some(ref mut ch) = self.children {
+                    ch[q].insert(old_pos, old_idx, depth + 1);
+                }
+            }
+        }
+
+        // Insert new node into appropriate child
+        let q = self.quadrant_for(pos);
+        if let Some(ref mut ch) = self.children {
+            ch[q].insert(pos, idx, depth + 1);
+        }
+    }
+}
+
+fn build_quadtree(positions: &[Vec2]) -> QuadTree {
+    if positions.is_empty() {
+        return QuadTree::new(Vec2::ZERO, Vec2::ONE);
+    }
+
+    // Compute bounding box with a small margin
+    let mut min = positions[0];
+    let mut max = positions[0];
+    for &p in positions.iter() {
+        min = min.min(p);
+        max = max.max(p);
+    }
+    // Ensure non-degenerate bounds (all nodes at same position)
+    let size = (max - min).max_element();
+    if size < 1e-6 {
+        let center = (min + max) * 0.5;
+        min = center - Vec2::splat(1.0);
+        max = center + Vec2::splat(1.0);
+    } else {
+        let margin = size * 0.01;
+        min -= Vec2::splat(margin);
+        max += Vec2::splat(margin);
+    }
+
+    // Make it square to keep quadrants balanced
+    let span = (max - min).max_element();
+    let center = (min + max) * 0.5;
+    min = center - Vec2::splat(span * 0.5);
+    max = center + Vec2::splat(span * 0.5);
+
+    let mut tree = QuadTree::new(min, max);
+    for (i, &pos) in positions.iter().enumerate() {
+        tree.insert(pos, i, 0);
+    }
+    tree
+}
+
+/// Accumulate Barnes-Hut repulsion force on a particle at `pos`.
+/// theta: opening angle criterion (0.7 is standard).
+fn barnes_hut_force(tree: &QuadTree, pos: Vec2, theta: f32, repulsion: f32) -> Vec2 {
+    if tree.total_mass == 0.0 {
+        return Vec2::ZERO;
+    }
+
+    let diff = pos - tree.center_of_mass;
+    let dist = diff.length();
+
+    // Avoid self-interaction: if this cell contains exactly 1 body and it's
+    // at (essentially) the same position as our query node, skip it.
+    if dist < 1e-9 {
+        // Recurse into children if available to find non-coincident bodies
+        if let Some(ref ch) = tree.children {
+            return ch.iter().map(|c| barnes_hut_force(c, pos, theta, repulsion)).sum();
+        }
+        return Vec2::ZERO;
+    }
+
+    let cell_size = tree.cell_size();
+
+    // Barnes-Hut criterion: treat cell as a single body if far enough away
+    if tree.is_leaf() || (cell_size / dist < theta) {
+        // F = repulsion * mass / dist^2, directed away from center of mass
+        let force_mag = repulsion * tree.total_mass / (dist * dist);
+        return diff.normalize() * force_mag;
+    }
+
+    // Otherwise recurse into children
+    match &tree.children {
+        Some(ch) => ch.iter().map(|c| barnes_hut_force(c, pos, theta, repulsion)).sum(),
+        None => Vec2::ZERO,
+    }
+}
+
+// ---------------------------------------------------------------------------
+
 pub fn compute_layout(
     graph: &FileGraph,
     embed_map: &EmbeddingMap,
@@ -112,16 +304,17 @@ pub fn compute_layout(
     let damping = 0.9;
     let mut velocities = vec![Vec2::ZERO; n];
 
+    // Barnes-Hut opening-angle criterion
+    let theta = 0.7_f32;
+
     for _ in 0..iterations {
         let mut forces = vec![Vec2::ZERO; n];
 
-        for i in 0..n {
-            for j in (i + 1)..n {
-                let diff = positions[i] - positions[j];
-                let dist = diff.length().max(0.01);
-                let force = diff.normalize() * repulsion / (dist * dist);
-                forces[i] += force;
-                forces[j] -= force;
+        // ── Barnes-Hut O(n log n) repulsion ──────────────────────────────
+        if n > 1 {
+            let tree = build_quadtree(&positions);
+            for i in 0..n {
+                forces[i] += barnes_hut_force(&tree, positions[i], theta, repulsion);
             }
         }
 
@@ -223,7 +416,7 @@ pub async fn run(
 
         if files_changed || mode_changed || cached_scene.is_none() {
             eprintln!("[cviz] Layout computing for {} files...", graph.files.len());
-            let iters = if graph.files.len() > 500 { 50 } else if graph.files.len() > 200 { 100 } else { 200 };
+            let iters = if graph.files.len() > 500 { 500 } else if graph.files.len() > 200 { 500 } else { 200 };
             let scene = compute_layout(&graph, &embed_map, dm, cm, iters);
             eprintln!("[cviz] Layout: {} nodes, {} edges", scene.nodes.len(), scene.edges.len());
             last_file_count = graph.files.len();
