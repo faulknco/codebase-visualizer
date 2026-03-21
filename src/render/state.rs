@@ -453,7 +453,6 @@ impl RenderState {
     }
 
     pub fn update_scene(&mut self, scene: &SceneGraph) {
-        eprintln!("[cviz] update_scene: {} nodes, current_instances={}", scene.nodes.len(), self.current_instances.len());
         // Build target instances from new scene
         let new_targets: Vec<NodeInstance> = scene
             .nodes
@@ -706,10 +705,7 @@ impl RenderState {
             }
 
             // Draw nodes on top of edges
-            if self.instance_count > 0 && self.instance_buffer.is_none() {
-                eprintln!("[cviz] BUG: instance_count={} but instance_buffer is None!", self.instance_count);
-            }
-            if let Some(instance_buffer) = &self.instance_buffer {
+if let Some(instance_buffer) = &self.instance_buffer {
                 if self.instance_count > 0 {
                     pass.set_pipeline(&self.node_pipeline);
                     pass.set_bind_group(0, &self.camera_bind_group, &[]);
