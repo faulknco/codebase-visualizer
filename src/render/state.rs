@@ -28,6 +28,7 @@ pub struct RenderState {
     current_edge_verts: Vec<EdgeVertex>,
     target_edge_verts: Vec<EdgeVertex>,
     pub show_edges: bool,
+    pub current_zoom: f32,
 }
 
 fn lerp_f32(a: f32, b: f32, t: f32) -> f32 {
@@ -263,6 +264,7 @@ impl RenderState {
             current_edge_verts: Vec::new(),
             target_edge_verts: Vec::new(),
             show_edges: true,
+            current_zoom: 0.2,
         }
     }
 
@@ -370,6 +372,17 @@ impl RenderState {
         }
     }
 
+    pub fn apply_lod(&mut self, zoom: f32) {
+        self.current_zoom = zoom;
+        let min_visible_radius = 0.3 / zoom;
+        for inst in &mut self.current_instances {
+            if inst.radius < min_visible_radius {
+                inst.color[3] = 0.0; // hide small nodes
+            }
+        }
+        self.rebuild_instance_buffer();
+    }
+
     fn rebuild_instance_buffer(&mut self) {
         self.instance_count = self.current_instances.len() as u32;
         if !self.current_instances.is_empty() {
@@ -457,7 +470,7 @@ impl RenderState {
             });
 
             // Draw edges BEFORE nodes so nodes render on top
-            if self.show_edges {
+            if self.show_edges && self.current_zoom > 0.15 {
                 if let Some(edge_buf) = &self.edge_vertex_buffer {
                     if self.edge_vertex_count > 0 {
                         pass.set_pipeline(&self.edge_pipeline);

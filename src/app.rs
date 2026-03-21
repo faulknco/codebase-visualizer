@@ -206,6 +206,11 @@ impl ApplicationHandler for App {
             state.animate(dt);
         }
 
+        // Apply zoom-dependent LOD
+        if let (Some(state), Some(camera)) = (&mut self.render_state, &self.camera) {
+            state.apply_lod(camera.zoom);
+        }
+
         // Apply selection highlighting
         if let (Some(state), Some(scene)) = (&mut self.render_state, &self.latest_scene) {
             let node_ids: Vec<String> = scene.nodes.iter().map(|n| n.id.clone()).collect();
