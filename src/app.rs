@@ -1,25 +1,40 @@
 // src/app.rs
 use std::path::PathBuf;
 use std::sync::Arc;
+use tokio::sync::{mpsc, RwLock};
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowId};
 
 use crate::render::RenderState;
+use crate::scene::{ColorMode, DepthMode, SceneGraph};
 
 pub struct App {
     repo_path: PathBuf,
     window: Option<Arc<Window>>,
     render_state: Option<RenderState>,
+    scene_rx: mpsc::Receiver<SceneGraph>,
+    depth_mode: Arc<RwLock<DepthMode>>,
+    color_mode: Arc<RwLock<ColorMode>>,
+    latest_scene: Option<SceneGraph>,
 }
 
 impl App {
-    pub fn new(repo_path: PathBuf) -> Self {
+    pub fn new(
+        repo_path: PathBuf,
+        scene_rx: mpsc::Receiver<SceneGraph>,
+        depth_mode: Arc<RwLock<DepthMode>>,
+        color_mode: Arc<RwLock<ColorMode>>,
+    ) -> Self {
         Self {
             repo_path,
             window: None,
             render_state: None,
+            scene_rx,
+            depth_mode,
+            color_mode,
+            latest_scene: None,
         }
     }
 }
@@ -55,6 +70,11 @@ impl ApplicationHandler for App {
     }
 
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+        // Drain the latest scene update without blocking
+        while let Ok(scene) = self.scene_rx.try_recv() {
+            self.latest_scene = Some(scene);
+        }
+
         if let Some(window) = &self.window {
             window.request_redraw();
         }
