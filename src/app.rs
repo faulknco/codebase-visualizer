@@ -1,7 +1,7 @@
 // src/app.rs
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::{mpsc, RwLock};
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
@@ -11,7 +11,7 @@ use glam::Vec2;
 
 use crate::render::camera::Camera;
 use crate::render::RenderState;
-use crate::scene::{ColorMode, DepthMode, SceneGraph};
+use crate::scene::{ColorMode, DepthMode, FileGraph, SceneGraph};
 use crate::ui::{self, InputState, UiAction};
 
 pub struct App {
@@ -27,6 +27,7 @@ pub struct App {
     last_frame: Instant,
     selected_node: Option<String>,
     hovered_node: Option<String>,
+    shared_graph: Arc<RwLock<Option<FileGraph>>>,
 }
 
 impl App {
@@ -35,6 +36,7 @@ impl App {
         scene_rx: mpsc::Receiver<SceneGraph>,
         depth_mode: Arc<RwLock<DepthMode>>,
         color_mode: Arc<RwLock<ColorMode>>,
+        shared_graph: Arc<RwLock<Option<FileGraph>>>,
     ) -> Self {
         Self {
             repo_path,
@@ -49,6 +51,7 @@ impl App {
             last_frame: Instant::now(),
             selected_node: None,
             hovered_node: None,
+            shared_graph,
         }
     }
 }
@@ -127,13 +130,84 @@ impl ApplicationHandler for App {
                     let window_size = Vec2::new(size.width as f32, size.height as f32);
                     if let Some(node) = ui::hit_test(pos, scene, camera, window_size) {
                         self.selected_node = Some(node.id.clone());
-                        // Print inspector info to stdout
                         println!();
                         println!("\u{2550}\u{2550}\u{2550} {} \u{2550}\u{2550}\u{2550}", node.id);
-                        println!("  Position: ({:.2}, {:.2})", node.pos.x, node.pos.y);
-                        println!("  Radius: {:.3}", node.radius);
-                        println!("  Depth: {:.3}", node.depth);
-                        println!("  Glow: {:.3}", node.glow);
+
+                        // Try to read rich file info from shared graph
+                        let graph_guard = self.shared_graph.try_read();
+                        if let Ok(guard) = graph_guard {
+                            if let Some(graph) = guard.as_ref() {
+                                if let Some(info) = graph.files.get(&node.id) {
+                                    // Compute directory from path
+                                    let dir = info.path
+                                        .parent()
+                                        .map(|p| {
+                                            let s = p.to_string_lossy();
+                                            if s.is_empty() { ".".to_string() } else { format!("{}/", s) }
+                                        })
+                                        .unwrap_or_else(|| "./".to_string());
+
+                                    // Compute days ago from last_modified (unix timestamp)
+                                    let now_unix = SystemTime::now()
+                                        .duration_since(UNIX_EPOCH)
+                                        .map(|d| d.as_secs() as i64)
+                                        .unwrap_or(0);
+                                    let days_ago = ((now_unix - info.last_modified).max(0) / 86400) as u64;
+                                    let last_change_str = if days_ago == 0 {
+                                        "today".to_string()
+                                    } else if days_ago == 1 {
+                                        "1 day ago".to_string()
+                                    } else {
+                                        format!("{} days ago", days_ago)
+                                    };
+
+                                    println!("  Directory:   {}", dir);
+                                    println!("  Lines:       {}", info.lines);
+                                    println!("  Commits:     {}", info.commit_count);
+                                    println!("  Last change: {}", last_change_str);
+
+                                    // Find co-changed files for this node, sorted by score desc
+                                    let mut co_changed: Vec<(&str, f32)> = graph.co_change
+                                        .iter()
+                                        .filter_map(|(a, b, score)| {
+                                            if a == &node.id {
+                                                Some((b.as_str(), *score))
+                                            } else if b == &node.id {
+                                                Some((a.as_str(), *score))
+                                            } else {
+                                                None
+                                            }
+                                        })
+                                        .collect();
+                                    co_changed.sort_by(|x, y| y.1.partial_cmp(&x.1).unwrap_or(std::cmp::Ordering::Equal));
+
+                                    if !co_changed.is_empty() {
+                                        println!("  Co-changed with:");
+                                        for (other_id, score) in co_changed.iter().take(5) {
+                                            println!("    {:.0}%  {}", score * 100.0, other_id);
+                                        }
+                                    }
+                                } else {
+                                    // FileInfo not available yet, fall back
+                                    println!("  Position: ({:.2}, {:.2})", node.pos.x, node.pos.y);
+                                    println!("  Radius: {:.3}", node.radius);
+                                    println!("  Depth: {:.3}", node.depth);
+                                    println!("  Glow: {:.3}", node.glow);
+                                }
+                            } else {
+                                // Graph not ready yet
+                                println!("  Position: ({:.2}, {:.2})", node.pos.x, node.pos.y);
+                                println!("  Radius: {:.3}", node.radius);
+                                println!("  Depth: {:.3}", node.depth);
+                                println!("  Glow: {:.3}", node.glow);
+                            }
+                        } else {
+                            // Could not acquire read lock
+                            println!("  Position: ({:.2}, {:.2})", node.pos.x, node.pos.y);
+                            println!("  Radius: {:.3}", node.radius);
+                            println!("  Depth: {:.3}", node.depth);
+                            println!("  Glow: {:.3}", node.glow);
+                        }
                     } else {
                         self.selected_node = None;
                     }

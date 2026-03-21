@@ -1,7 +1,8 @@
 use crate::scene::{EmbeddingMap, FileGraph};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use tokio::sync::mpsc;
+use std::sync::Arc;
+use tokio::sync::{mpsc, RwLock};
 
 fn tokenize(s: &str) -> Vec<String> {
     let mut tokens = Vec::new();
@@ -82,6 +83,7 @@ pub async fn run(
     repo_path: PathBuf,
     mut graph_rx: mpsc::Receiver<FileGraph>,
     tx: mpsc::Sender<(FileGraph, EmbeddingMap)>,
+    shared_graph: Arc<RwLock<Option<FileGraph>>>,
 ) {
     eprintln!("[cviz] Embedder started");
 
@@ -99,6 +101,7 @@ pub async fn run(
 
         eprintln!("[cviz] Embedder: computed {} embeddings", embed_map.embeddings.len());
 
-        if tx.send((graph, embed_map)).await.is_err() { break; }
+        if tx.send((graph.clone(), embed_map)).await.is_err() { break; }
+        *shared_graph.write().await = Some(graph);
     }
 }
