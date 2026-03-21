@@ -239,15 +239,10 @@ fn barnes_hut_force(tree: &QuadTree, pos: Vec2, theta: f32, repulsion: f32) -> V
     }
 
     let diff = pos - tree.center_of_mass;
-    let dist = diff.length();
+    let dist = diff.length().max(0.01); // prevent division by zero / explosion
 
-    // Avoid self-interaction: if this cell contains exactly 1 body and it's
-    // at (essentially) the same position as our query node, skip it.
-    if dist < 1e-9 {
-        // Recurse into children if available to find non-coincident bodies
-        if let Some(ref ch) = tree.children {
-            return ch.iter().map(|c| barnes_hut_force(c, pos, theta, repulsion)).sum();
-        }
+    // Avoid self-interaction: if this is a leaf at essentially the same position
+    if tree.is_leaf() && tree.total_mass <= 1.0 && dist < 0.02 {
         return Vec2::ZERO;
     }
 
@@ -255,9 +250,8 @@ fn barnes_hut_force(tree: &QuadTree, pos: Vec2, theta: f32, repulsion: f32) -> V
 
     // Barnes-Hut criterion: treat cell as a single body if far enough away
     if tree.is_leaf() || (cell_size / dist < theta) {
-        // F = repulsion * mass / dist^2, directed away from center of mass
-        let force_mag = repulsion * tree.total_mass / (dist * dist);
-        return diff.normalize() * force_mag;
+        let force_mag = (repulsion * tree.total_mass / (dist * dist)).min(100.0); // cap force
+        return diff / dist * force_mag; // manual normalize to avoid NaN
     }
 
     // Otherwise recurse into children
@@ -349,7 +343,17 @@ pub fn compute_layout(
 
         for i in 0..n {
             velocities[i] = (velocities[i] + forces[i] * 0.01) * damping;
+            // Cap velocity to prevent explosion
+            let speed = velocities[i].length();
+            if speed > 5.0 {
+                velocities[i] = velocities[i] / speed * 5.0;
+            }
             positions[i] += velocities[i];
+            // Sanitize NaN (shouldn't happen but safety net)
+            if positions[i].x.is_nan() || positions[i].y.is_nan() {
+                positions[i] = Vec2::ZERO;
+                velocities[i] = Vec2::ZERO;
+            }
         }
     }
 

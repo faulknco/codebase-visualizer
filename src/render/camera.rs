@@ -89,5 +89,6 @@ impl Camera {
 
         self.target_center = Vec2::new(center_x, center_y);
         self.target_zoom = zoom;
+        eprintln!("[cviz] Camera fit: center=({:.1}, {:.1}) zoom={:.4} (scene {:.0}x{:.0})", center_x, center_y, zoom, width, height);
     }
 }
