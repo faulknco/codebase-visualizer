@@ -13,11 +13,57 @@ fn embedding_distance(a: &[f32], b: &[f32]) -> f32 {
 }
 
 fn color_for_extension(path: &str) -> [f32; 4] {
-    if path.ends_with(".rs") { [0.97, 0.44, 0.44, 1.0] }
-    else if path.ends_with(".toml") { [0.98, 0.75, 0.14, 1.0] }
-    else if path.ends_with(".md") { [0.20, 0.83, 0.60, 1.0] }
-    else if path.contains("test") { [0.51, 0.55, 0.97, 1.0] }
-    else { [0.58, 0.64, 0.72, 1.0] }
+    // By file extension
+    if path.ends_with(".rs") { return [0.97, 0.44, 0.44, 1.0]; }       // red — Rust
+    if path.ends_with(".toml") { return [0.98, 0.75, 0.14, 1.0]; }     // amber — config
+    if path.ends_with(".md") { return [0.20, 0.83, 0.60, 1.0]; }       // green — docs
+    if path.ends_with(".py") { return [0.36, 0.65, 0.96, 1.0]; }       // blue — Python
+    if path.ends_with(".js") || path.ends_with(".ts") || path.ends_with(".tsx") || path.ends_with(".jsx") {
+        return [0.96, 0.87, 0.25, 1.0];                                 // yellow — JS/TS
+    }
+    if path.ends_with(".wgsl") || path.ends_with(".glsl") || path.ends_with(".hlsl") {
+        return [0.85, 0.45, 0.95, 1.0];                                 // purple — shaders
+    }
+    if path.ends_with(".json") || path.ends_with(".yaml") || path.ends_with(".yml") || path.ends_with(".lock") {
+        return [0.75, 0.65, 0.45, 1.0];                                 // tan — data/config
+    }
+    if path.ends_with(".sh") || path.ends_with(".bash") || path.ends_with(".zsh") {
+        return [0.55, 0.85, 0.55, 1.0];                                 // light green — scripts
+    }
+    if path.ends_with(".css") || path.ends_with(".scss") {
+        return [0.95, 0.55, 0.75, 1.0];                                 // pink — styles
+    }
+    if path.ends_with(".html") || path.ends_with(".astro") || path.ends_with(".svelte") {
+        return [0.95, 0.60, 0.35, 1.0];                                 // orange — templates
+    }
+    if path.contains("test") || path.contains("spec") {
+        return [0.51, 0.55, 0.97, 1.0];                                 // indigo — tests
+    }
+
+    // For unknown types, color by parent directory (hashed) so files in the same folder cluster visually
+    let dir = path.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
+    if dir.is_empty() {
+        return [0.58, 0.64, 0.72, 1.0]; // root files — slate
+    }
+    // Simple hash to pick a hue
+    let hash: u32 = dir.bytes().fold(0u32, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u32));
+    let hue = (hash % 360) as f32 / 360.0;
+    // HSV to RGB (s=0.5, v=0.8 for muted but visible)
+    let s = 0.5f32;
+    let v = 0.8f32;
+    let h = hue * 6.0;
+    let c = v * s;
+    let x = c * (1.0 - ((h % 2.0) - 1.0).abs());
+    let m = v - c;
+    let (r, g, b) = match h as u32 {
+        0 => (c, x, 0.0),
+        1 => (x, c, 0.0),
+        2 => (0.0, c, x),
+        3 => (0.0, x, c),
+        4 => (x, 0.0, c),
+        _ => (c, 0.0, x),
+    };
+    [r + m, g + m, b + m, 1.0]
 }
 
 fn color_for_recency(normalized_recency: f32) -> [f32; 4] {
@@ -162,13 +208,29 @@ pub async fn run(
 ) {
     eprintln!("[cviz] LayoutEngine started");
 
+    let mut last_file_count: usize = 0;
+    let mut cached_scene: Option<SceneGraph> = None;
+    let mut last_dm = DepthMode::Recency;
+    let mut last_cm = ColorMode::FileType;
+
     while let Some((graph, embed_map)) = rx.recv().await {
         let dm = *depth_mode.read().await;
         let cm = *color_mode.read().await;
-        eprintln!("[cviz] Layout computing for {} files...", graph.files.len());
-        let iters = if graph.files.len() > 500 { 50 } else if graph.files.len() > 200 { 100 } else { 200 };
-        let scene = compute_layout(&graph, &embed_map, dm, cm, iters);
-        eprintln!("[cviz] Layout: {} nodes, {} edges", scene.nodes.len(), scene.edges.len());
-        if scene_tx.send(scene).await.is_err() { break; }
+
+        // Only recompute layout if file count changed or modes changed
+        let files_changed = graph.files.len() != last_file_count;
+        let mode_changed = dm != last_dm || cm != last_cm;
+
+        if files_changed || mode_changed || cached_scene.is_none() {
+            eprintln!("[cviz] Layout computing for {} files...", graph.files.len());
+            let iters = if graph.files.len() > 500 { 50 } else if graph.files.len() > 200 { 100 } else { 200 };
+            let scene = compute_layout(&graph, &embed_map, dm, cm, iters);
+            eprintln!("[cviz] Layout: {} nodes, {} edges", scene.nodes.len(), scene.edges.len());
+            last_file_count = graph.files.len();
+            last_dm = dm;
+            last_cm = cm;
+            cached_scene = Some(scene.clone());
+            if scene_tx.send(scene).await.is_err() { break; }
+        }
     }
 }
