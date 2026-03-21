@@ -583,13 +583,17 @@ impl RenderState {
 
     pub fn apply_lod(&mut self, zoom: f32) {
         self.current_zoom = zoom;
-        let min_visible_radius = 0.3 / zoom;
-        for inst in &mut self.current_instances {
-            if inst.radius < min_visible_radius {
-                inst.color[3] = 0.0; // hide small nodes
+        // Only apply LOD filtering when zoomed out significantly
+        // At low zoom values, min_visible_radius would hide everything
+        if zoom > 0.5 {
+            let min_visible_radius = 0.15 / zoom;
+            for inst in &mut self.current_instances {
+                if inst.radius < min_visible_radius {
+                    inst.color[3] = 0.0; // hide small nodes
+                }
             }
+            self.rebuild_instance_buffer();
         }
-        self.rebuild_instance_buffer();
     }
 
     fn rebuild_instance_buffer(&mut self) {
