@@ -87,6 +87,7 @@ pub async fn run(
 ) {
     eprintln!("[cviz] Embedder started");
 
+    let mut first_run = true;
     while let Some(graph) = graph_rx.recv().await {
         let mut file_contents: HashMap<String, String> = HashMap::new();
         for (id, info) in &graph.files {
@@ -99,7 +100,10 @@ pub async fn run(
         let raw_embeddings = compute_tfidf(&file_contents);
         let embed_map = EmbeddingMap { embeddings: raw_embeddings };
 
-        eprintln!("[cviz] Embedder: computed {} embeddings", embed_map.embeddings.len());
+        if first_run {
+            eprintln!("[cviz] Embedder: computed {} embeddings", embed_map.embeddings.len());
+            first_run = false;
+        }
 
         if tx.send((graph.clone(), embed_map)).await.is_err() { break; }
         *shared_graph.write().await = Some(graph);

@@ -42,7 +42,25 @@ impl Camera {
     }
 
     pub fn zoom_by(&mut self, factor: f32) {
-        self.target_zoom = (self.target_zoom * factor).clamp(0.1, 50.0);
+        self.target_zoom = (self.target_zoom * factor).clamp(0.01, 50.0);
+    }
+
+    /// Zoom centred on the given cursor position (in screen pixels) rather than the view centre.
+    pub fn zoom_at(&mut self, factor: f32, cursor_pos: Vec2, window_size: Vec2) {
+        let old_zoom = self.target_zoom;
+        self.target_zoom = (self.target_zoom * factor).clamp(0.01, 50.0);
+
+        // Convert cursor to NDC (-1 to 1)
+        let ndc_x = (cursor_pos.x / window_size.x) * 2.0 - 1.0;
+        let ndc_y = -((cursor_pos.y / window_size.y) * 2.0 - 1.0);
+
+        // World-space half-width before and after zoom
+        let half_w_old = 10.0 / old_zoom;
+        let half_w_new = 10.0 / self.target_zoom;
+
+        // Shift centre so the world point under the cursor stays fixed
+        self.target_center.x += ndc_x * (half_w_new - half_w_old);
+        self.target_center.y += ndc_y * (half_w_new - half_w_old) / self.aspect;
     }
 
     pub fn set_aspect(&mut self, aspect: f32) {

@@ -126,8 +126,6 @@ pub fn collect_file_graph(repo_path: &Path, max_commits: usize) -> FileGraph {
         }
     }
 
-    eprintln!("[cviz] Co-change pairs (filtered): {}", co_change.len());
-
     FileGraph { files, co_change }
 }
 

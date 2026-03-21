@@ -169,7 +169,7 @@ pub fn build_hull_geometry(nodes: &[SceneNode]) -> Vec<HullVertex> {
             .collect();
 
         let hue = dir_to_hue(&dir);
-        let color = hsv_to_rgba(hue, 0.07);
+        let color = hsv_to_rgba(hue, 0.04);
 
         // Fan-triangulate from centroid
         let centroid_vertex = HullVertex {

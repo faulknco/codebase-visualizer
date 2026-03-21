@@ -28,6 +28,7 @@ pub struct App {
     selected_node: Option<String>,
     hovered_node: Option<String>,
     shared_graph: Arc<RwLock<Option<FileGraph>>>,
+    first_scene: bool,
 }
 
 impl App {
@@ -52,6 +53,7 @@ impl App {
             selected_node: None,
             hovered_node: None,
             shared_graph,
+            first_scene: true,
         }
     }
 }
@@ -85,8 +87,10 @@ impl ApplicationHandler for App {
                 }
             }
             UiAction::Zoom(factor) => {
-                if let Some(camera) = &mut self.camera {
-                    camera.zoom_by(factor);
+                if let (Some(camera), Some(window)) = (&mut self.camera, &self.window) {
+                    let size = window.inner_size();
+                    let window_size = Vec2::new(size.width as f32, size.height as f32);
+                    camera.zoom_at(factor, self.input_state.mouse_pos, window_size);
                 }
             }
             UiAction::SetDepthMode(mode) => {
@@ -258,13 +262,15 @@ impl ApplicationHandler for App {
 
         if scene_changed {
             if let Some(scene) = &self.latest_scene {
-                eprintln!("[cviz] App received scene: {} nodes, {} edges", scene.nodes.len(), scene.edges.len());
-                // Auto-fit camera on first scene
-                if let Some(camera) = &mut self.camera {
-                    let positions: Vec<(f32, f32)> = scene.nodes.iter()
-                        .map(|n| (n.pos.x, n.pos.y))
-                        .collect();
-                    camera.fit_to_scene(&positions);
+                if self.first_scene {
+                    eprintln!("[cviz] App received scene: {} nodes, {} edges", scene.nodes.len(), scene.edges.len());
+                    if let Some(camera) = &mut self.camera {
+                        let positions: Vec<(f32, f32)> = scene.nodes.iter()
+                            .map(|n| (n.pos.x, n.pos.y))
+                            .collect();
+                        camera.fit_to_scene(&positions);
+                    }
+                    self.first_scene = false;
                 }
             }
             if let (Some(state), Some(scene)) = (&mut self.render_state, &self.latest_scene) {
