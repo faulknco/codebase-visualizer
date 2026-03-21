@@ -1,6 +1,7 @@
 // src/app.rs
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::{mpsc, RwLock};
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
@@ -23,6 +24,9 @@ pub struct App {
     latest_scene: Option<SceneGraph>,
     camera: Option<Camera>,
     input_state: InputState,
+    last_frame: Instant,
+    selected_node: Option<String>,
+    hovered_node: Option<String>,
 }
 
 impl App {
@@ -42,6 +46,9 @@ impl App {
             latest_scene: None,
             camera: None,
             input_state: InputState::new(),
+            last_frame: Instant::now(),
+            selected_node: None,
+            hovered_node: None,
         }
     }
 }
@@ -90,11 +97,33 @@ impl ApplicationHandler for App {
             }
             UiAction::ResetCamera => {
                 if let Some(camera) = &mut self.camera {
-                    camera.center = Vec2::ZERO;
-                    camera.zoom = 1.0;
+                    camera.reset();
                 }
             }
-            UiAction::Deselect => {}
+            UiAction::Click(pos) => {
+                // Hit test on click
+                if let (Some(scene), Some(camera), Some(window)) =
+                    (&self.latest_scene, &self.camera, &self.window)
+                {
+                    let size = window.inner_size();
+                    let window_size = Vec2::new(size.width as f32, size.height as f32);
+                    if let Some(node) = ui::hit_test(pos, scene, camera, window_size) {
+                        self.selected_node = Some(node.id.clone());
+                        // Print inspector info to stdout
+                        println!();
+                        println!("\u{2550}\u{2550}\u{2550} {} \u{2550}\u{2550}\u{2550}", node.id);
+                        println!("  Position: ({:.2}, {:.2})", node.pos.x, node.pos.y);
+                        println!("  Radius: {:.3}", node.radius);
+                        println!("  Depth: {:.3}", node.depth);
+                        println!("  Glow: {:.3}", node.glow);
+                    } else {
+                        self.selected_node = None;
+                    }
+                }
+            }
+            UiAction::Deselect => {
+                self.selected_node = None;
+            }
             UiAction::None => {}
         }
 
@@ -121,6 +150,11 @@ impl ApplicationHandler for App {
     }
 
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+        // Compute delta time
+        let now = Instant::now();
+        let dt = (now - self.last_frame).as_secs_f32();
+        self.last_frame = now;
+
         // Drain the latest scene update without blocking
         let mut scene_changed = false;
         while let Ok(scene) = self.scene_rx.try_recv() {
@@ -131,6 +165,46 @@ impl ApplicationHandler for App {
         if scene_changed {
             if let (Some(state), Some(scene)) = (&mut self.render_state, &self.latest_scene) {
                 state.update_scene(scene);
+            }
+        }
+
+        // Animate camera interpolation
+        if let Some(camera) = &mut self.camera {
+            camera.update(dt);
+        }
+
+        // Animate node/edge interpolation
+        if let Some(state) = &mut self.render_state {
+            state.animate(dt);
+        }
+
+        // Apply selection highlighting
+        if let (Some(state), Some(scene)) = (&mut self.render_state, &self.latest_scene) {
+            let node_ids: Vec<String> = scene.nodes.iter().map(|n| n.id.clone()).collect();
+            state.apply_selection(self.selected_node.as_deref(), &node_ids);
+        }
+
+        // Update camera uniform
+        if let (Some(state), Some(camera)) = (&mut self.render_state, &self.camera) {
+            state.update_camera(camera);
+        }
+
+        // Hover: hit test at current mouse position, update window title
+        if let (Some(scene), Some(camera), Some(window)) =
+            (&self.latest_scene, &self.camera, &self.window)
+        {
+            let size = window.inner_size();
+            let window_size = Vec2::new(size.width as f32, size.height as f32);
+            let hit = ui::hit_test(self.input_state.mouse_pos, scene, camera, window_size);
+            let new_hover = hit.map(|n| n.id.clone());
+            if new_hover != self.hovered_node {
+                self.hovered_node = new_hover;
+                let title = if let Some(ref name) = self.hovered_node {
+                    format!("cviz — {}", name)
+                } else {
+                    format!("cviz — {}", self.repo_path.display())
+                };
+                window.set_title(&title);
             }
         }
 

@@ -2,7 +2,7 @@ use bytemuck::{Pod, Zeroable};
 use crate::scene::SceneEdge;
 
 #[repr(C)]
-#[derive(Copy, Clone, Pod, Zeroable)]
+#[derive(Copy, Clone, Pod, Zeroable, PartialEq)]
 pub struct EdgeVertex {
     pub position: [f32; 2],
     pub opacity: f32,

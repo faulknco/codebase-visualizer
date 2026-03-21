@@ -4,6 +4,8 @@ pub struct Camera {
     pub center: Vec2,
     pub zoom: f32,
     pub aspect: f32,
+    pub target_center: Vec2,
+    pub target_zoom: f32,
 }
 
 impl Camera {
@@ -12,6 +14,8 @@ impl Camera {
             center: Vec2::ZERO,
             zoom: 1.0,
             aspect,
+            target_center: Vec2::ZERO,
+            target_zoom: 1.0,
         }
     }
 
@@ -28,14 +32,26 @@ impl Camera {
     }
 
     pub fn pan(&mut self, delta: Vec2) {
-        self.center -= delta / self.zoom;
+        self.target_center -= delta / self.zoom;
     }
 
     pub fn zoom_by(&mut self, factor: f32) {
-        self.zoom = (self.zoom * factor).clamp(0.1, 50.0);
+        self.target_zoom = (self.target_zoom * factor).clamp(0.1, 50.0);
     }
 
     pub fn set_aspect(&mut self, aspect: f32) {
         self.aspect = aspect;
+    }
+
+    pub fn update(&mut self, dt: f32) {
+        let speed = 8.0 * dt;
+        let t = speed.min(1.0);
+        self.center = self.center.lerp(self.target_center, t);
+        self.zoom = self.zoom + (self.target_zoom - self.zoom) * t;
+    }
+
+    pub fn reset(&mut self) {
+        self.target_center = Vec2::ZERO;
+        self.target_zoom = 1.0;
     }
 }

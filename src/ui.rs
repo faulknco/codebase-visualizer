@@ -1,12 +1,15 @@
 use glam::Vec2;
 use winit::event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::keyboard::{Key, NamedKey};
-use crate::scene::DepthMode;
+use crate::render::camera::Camera;
+use crate::scene::{DepthMode, SceneGraph, SceneNode};
 
 pub struct InputState {
     pub mouse_pos: Vec2,
     pub dragging: bool,
     pub last_mouse_pos: Vec2,
+    drag_start: Vec2,
+    drag_distance: f32,
 }
 
 impl InputState {
@@ -15,7 +18,13 @@ impl InputState {
             mouse_pos: Vec2::ZERO,
             dragging: false,
             last_mouse_pos: Vec2::ZERO,
+            drag_start: Vec2::ZERO,
+            drag_distance: 0.0,
         }
+    }
+
+    pub fn was_click(&self) -> bool {
+        self.drag_distance < 5.0
     }
 }
 
@@ -26,6 +35,7 @@ pub enum UiAction {
     CycleColorMode,
     ResetCamera,
     Deselect,
+    Click(Vec2),
     None,
 }
 
@@ -44,14 +54,26 @@ pub fn handle_event(event: &WindowEvent, state: &mut InputState) -> UiAction {
             state.mouse_pos = pos;
             if state.dragging {
                 let delta = pos - state.last_mouse_pos;
+                state.drag_distance += delta.length();
                 UiAction::Pan(delta)
             } else {
                 UiAction::None
             }
         }
         WindowEvent::MouseInput { state: btn_state, button: MouseButton::Left, .. } => {
-            state.dragging = *btn_state == ElementState::Pressed;
-            UiAction::None
+            if *btn_state == ElementState::Pressed {
+                state.dragging = true;
+                state.drag_start = state.mouse_pos;
+                state.drag_distance = 0.0;
+                UiAction::None
+            } else {
+                state.dragging = false;
+                if state.was_click() {
+                    UiAction::Click(state.mouse_pos)
+                } else {
+                    UiAction::None
+                }
+            }
         }
         WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Right, .. } => {
             UiAction::Deselect
@@ -69,4 +91,33 @@ pub fn handle_event(event: &WindowEvent, state: &mut InputState) -> UiAction {
         }
         _ => UiAction::None,
     }
+}
+
+pub fn hit_test<'a>(
+    mouse_pos: Vec2,
+    scene: &'a SceneGraph,
+    camera: &Camera,
+    window_size: Vec2,
+) -> Option<&'a SceneNode> {
+    // Convert screen coords to world coords
+    let ndc_x = (mouse_pos.x / window_size.x) * 2.0 - 1.0;
+    let ndc_y = -((mouse_pos.y / window_size.y) * 2.0 - 1.0); // flip Y
+    let half_w = 10.0 / camera.zoom;
+    let half_h = half_w / camera.aspect;
+    let world_x = camera.center.x + ndc_x * half_w;
+    let world_y = camera.center.y + ndc_y * half_h;
+    let world_pos = Vec2::new(world_x, world_y);
+
+    // Find nearest node within its radius
+    let mut best: Option<(&SceneNode, f32)> = None;
+    for node in &scene.nodes {
+        let dist = world_pos.distance(node.pos);
+        if dist <= node.radius * 2.0 {
+            // generous hit area
+            if best.is_none() || dist < best.unwrap().1 {
+                best = Some((node, dist));
+            }
+        }
+    }
+    best.map(|(node, _)| node)
 }

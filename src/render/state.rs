@@ -23,6 +23,23 @@ pub struct RenderState {
     instance_count: u32,
     edge_vertex_buffer: Option<wgpu::Buffer>,
     edge_vertex_count: u32,
+    current_instances: Vec<NodeInstance>,
+    target_instances: Vec<NodeInstance>,
+    current_edge_verts: Vec<EdgeVertex>,
+    target_edge_verts: Vec<EdgeVertex>,
+}
+
+fn lerp_f32(a: f32, b: f32, t: f32) -> f32 {
+    a + (b - a) * t
+}
+
+fn lerp_color(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
+    [
+        lerp_f32(a[0], b[0], t),
+        lerp_f32(a[1], b[1], t),
+        lerp_f32(a[2], b[2], t),
+        lerp_f32(a[3], b[3], t),
+    ]
 }
 
 impl RenderState {
@@ -240,6 +257,10 @@ impl RenderState {
             instance_count: 0,
             edge_vertex_buffer: None,
             edge_vertex_count: 0,
+            current_instances: Vec::new(),
+            target_instances: Vec::new(),
+            current_edge_verts: Vec::new(),
+            target_edge_verts: Vec::new(),
         }
     }
 
@@ -252,40 +273,127 @@ impl RenderState {
     }
 
     pub fn update_scene(&mut self, scene: &SceneGraph) {
-        // Build node instance buffer
-        let instances: Vec<NodeInstance> = scene
+        // Build target instances from new scene
+        let new_targets: Vec<NodeInstance> = scene
             .nodes
             .iter()
             .map(NodeInstance::from_scene_node)
             .collect();
 
-        self.instance_count = instances.len() as u32;
+        self.target_instances = new_targets;
 
-        if !instances.is_empty() {
+        // If current_instances is empty (first scene), snap immediately
+        if self.current_instances.is_empty() {
+            self.current_instances = self.target_instances.clone();
+            self.rebuild_instance_buffer();
+        }
+
+        // Build target edge vertices
+        let new_edge_verts = edges_to_vertices(&scene.edges);
+        self.target_edge_verts = new_edge_verts;
+
+        if self.current_edge_verts.is_empty() {
+            self.current_edge_verts = self.target_edge_verts.clone();
+            self.rebuild_edge_buffer();
+        }
+    }
+
+    pub fn animate(&mut self, dt: f32) {
+        if self.current_instances.is_empty() {
+            return;
+        }
+
+        let speed = 8.0 * dt;
+        let t = speed.min(1.0);
+        let mut changed = false;
+
+        // Lerp node instances toward targets
+        let target_len = self.target_instances.len();
+        // Resize current to match target (snap new entries)
+        if self.current_instances.len() != target_len {
+            self.current_instances.resize(target_len, NodeInstance {
+                center: [0.0; 2],
+                radius: 0.0,
+                depth: 0.0,
+                color: [0.0; 4],
+                glow: 0.0,
+                _padding: [0.0; 3],
+            });
+            // Snap any new entries
+            for i in self.current_instances.len()..target_len {
+                self.current_instances[i] = self.target_instances[i];
+            }
+            changed = true;
+        }
+
+        for i in 0..target_len.min(self.current_instances.len()) {
+            let cur = &mut self.current_instances[i];
+            let tgt = &self.target_instances[i];
+
+            cur.center[0] = lerp_f32(cur.center[0], tgt.center[0], t);
+            cur.center[1] = lerp_f32(cur.center[1], tgt.center[1], t);
+            cur.radius = lerp_f32(cur.radius, tgt.radius, t);
+            cur.depth = lerp_f32(cur.depth, tgt.depth, t);
+            cur.color = lerp_color(cur.color, tgt.color, t);
+            cur.glow = lerp_f32(cur.glow, tgt.glow, t);
+            changed = true;
+        }
+
+        // Snap edges (they move with nodes anyway)
+        if self.current_edge_verts != self.target_edge_verts {
+            self.current_edge_verts = self.target_edge_verts.clone();
+            self.rebuild_edge_buffer();
+        }
+
+        if changed {
+            self.rebuild_instance_buffer();
+        }
+    }
+
+    /// Apply selection highlighting: boost selected node glow, dim unrelated nodes.
+    pub fn apply_selection(&mut self, selected_id: Option<&str>, node_ids: &[String]) {
+        if let Some(sel_id) = selected_id {
+            for (i, inst) in self.current_instances.iter_mut().enumerate() {
+                if i < node_ids.len() {
+                    if node_ids[i] == sel_id {
+                        // Boost selected node glow
+                        inst.glow = 1.0;
+                    } else {
+                        // Dim unrelated nodes
+                        inst.color[3] = inst.color[3].min(0.3);
+                    }
+                }
+            }
+            self.rebuild_instance_buffer();
+        }
+    }
+
+    fn rebuild_instance_buffer(&mut self) {
+        self.instance_count = self.current_instances.len() as u32;
+        if !self.current_instances.is_empty() {
             self.instance_buffer =
                 Some(
                     self.device
                         .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                             label: Some("node instance buffer"),
-                            contents: bytemuck::cast_slice(&instances),
+                            contents: bytemuck::cast_slice(&self.current_instances),
                             usage: wgpu::BufferUsages::VERTEX,
                         }),
                 );
         } else {
             self.instance_buffer = None;
         }
+    }
 
-        // Build edge vertex buffer
-        let edge_verts = edges_to_vertices(&scene.edges);
-        self.edge_vertex_count = edge_verts.len() as u32;
-
-        if !edge_verts.is_empty() {
+    fn rebuild_edge_buffer(&mut self) {
+        self.edge_vertex_count = self.current_edge_verts.len() as u32;
+        if !self.current_edge_verts.is_empty() {
             self.edge_vertex_buffer =
                 Some(
                     self.device
                         .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                             label: Some("edge vertex buffer"),
-                            contents: bytemuck::cast_slice(&edge_verts),
+                            contents: bytemuck::cast_slice(&self.current_edge_verts),
                             usage: wgpu::BufferUsages::VERTEX,
                         }),
                 );
