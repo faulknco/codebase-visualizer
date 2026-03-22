@@ -597,8 +597,8 @@ impl RenderState {
                     let activity = (1.0 - age / 60.0).clamp(0.0, 1.0);
                     inst.activity = activity;
                     // Boost glow and radius for active files
-                    inst.glow = 1.0;
-                    inst.radius *= 1.0 + 0.3 * activity; // grow 30% when just touched
+                    inst.glow = inst.glow.max(0.9 * activity);
+                    inst.radius *= 1.0 + 0.15 * activity; // grow 15% when just touched
                     changed = true;
                 } else {
                     if inst.activity > 0.0 {
