@@ -596,8 +596,9 @@ impl RenderState {
                     // Fade from 1.0 (just touched) to 0.0 (60 seconds old)
                     let activity = (1.0 - age / 60.0).clamp(0.0, 1.0);
                     inst.activity = activity;
-                    // Boost glow for active files
-                    inst.glow = inst.glow.max(0.8 * activity);
+                    // Boost glow and radius for active files
+                    inst.glow = 1.0;
+                    inst.radius *= 1.0 + 0.3 * activity; // grow 30% when just touched
                     changed = true;
                 } else {
                     if inst.activity > 0.0 {

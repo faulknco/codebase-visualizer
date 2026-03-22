@@ -54,13 +54,17 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var final_color = lit + glow_color;
     let alpha = edge;
 
-    // Agent activity: pulsing cyan ring
+    // Agent activity: strong cyan override + bright ring
     if (in.activity > 0.0) {
-        let ring_dist = abs(dist - 0.85);
-        let ring = smoothstep(0.1, 0.0, ring_dist) * in.activity;
-        let agent_color = vec3<f32>(0.2, 0.85, 1.0);  // cyan
-        final_color = mix(final_color, agent_color, in.activity * 0.5);  // tint toward cyan
-        final_color += agent_color * ring * 0.8;  // add ring
+        let agent_color = vec3<f32>(0.1, 0.9, 1.0);  // bright cyan
+        // Strong tint — almost fully replace the base color
+        final_color = mix(final_color, agent_color * 1.2, in.activity * 0.85);
+        // Bright outer ring
+        let ring_dist = abs(dist - 0.9);
+        let ring = smoothstep(0.08, 0.0, ring_dist) * in.activity;
+        final_color += agent_color * ring * 1.5;
+        // Inner glow boost
+        final_color += agent_color * core * in.activity * 0.3;
     }
 
     return vec4<f32>(final_color, alpha);
